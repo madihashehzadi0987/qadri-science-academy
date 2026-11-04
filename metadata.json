@@ -1,0 +1,6 @@
+{
+  "name": "Qadri Science Academy",
+  "description": "Official portal for Qadri Science Academy offering Classes 1–10 & Matric Science education with admissions, academics, events, and notices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
