@@ -142,11 +142,15 @@ export const EnquiryTrackerModal: React.FC<EnquiryTrackerModalProps> = ({
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400 block">Guardian:</span>
-                    <span>{result.guardian_name} ({result.guardian_relation})</span>
+                    <span>{result.guardian_name}</span>
                   </div>
                   <div>
                     <span className="text-[11px] text-slate-400 block">Phone:</span>
                     <span>{result.phone}</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-[11px] text-slate-400 block">Address / City:</span>
+                    <span>{result.address}</span>
                   </div>
                 </div>
 

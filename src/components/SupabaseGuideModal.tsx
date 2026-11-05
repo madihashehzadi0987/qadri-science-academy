@@ -2,15 +2,13 @@ import React, { useState } from 'react';
 import {
   Database,
   X,
-  CheckCircle2,
   Copy,
-  ExternalLink,
   ShieldCheck,
-  Terminal,
   FileCode,
-  Server,
+  RefreshCw,
+  CheckCircle2,
 } from 'lucide-react';
-import { isSupabaseConfigured } from '../lib/supabase';
+import { isSupabaseConfigured, getSupabaseConfig } from '../lib/supabase';
 
 interface SupabaseGuideModalProps {
   isOpen: boolean;
@@ -21,18 +19,64 @@ export const SupabaseGuideModal: React.FC<SupabaseGuideModalProps> = ({
   isOpen,
   onClose,
 }) => {
+  const [copiedSql, setCopiedSql] = useState(false);
   const [copiedEnv, setCopiedEnv] = useState(false);
-  const isDbLive = isSupabaseConfigured();
+  const config = getSupabaseConfig();
+  const isDbLive = config.isConfigured;
 
   if (!isOpen) return null;
 
+  const sqlPrompt = `-- ====================================================================
+-- PROMPT TO PASTE IN SUPABASE SQL EDITOR TO CREATE ADMISSION TABLE (5 FIELDS)
+-- ====================================================================
+-- Paste into: Supabase Dashboard -> SQL Editor -> Click 'Run'
+
+CREATE TABLE IF NOT EXISTS public.admission_inquiries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tracking_id VARCHAR(50) UNIQUE NOT NULL,
+    student_name VARCHAR(150) NOT NULL,     -- Field 1: Student Full Name
+    guardian_name VARCHAR(150) NOT NULL,    -- Field 2: Father / Guardian Name
+    grade_applying VARCHAR(100) NOT NULL,   -- Field 3: Class Applying For (1–10 & Matric)
+    phone VARCHAR(30) NOT NULL,             -- Field 4: Contact / WhatsApp Number
+    address TEXT NOT NULL,                  -- Field 5: City / Residential Address
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+-- Index for instant tracking lookup
+CREATE INDEX IF NOT EXISTS idx_admission_inquiries_tracking_id 
+ON public.admission_inquiries (tracking_id);
+
+-- Enable Row Level Security (RLS)
+ALTER TABLE public.admission_inquiries ENABLE ROW LEVEL SECURITY;
+
+-- Allow public anonymous visitors to submit new admission inquiries
+DROP POLICY IF EXISTS "Allow public insert to admission_inquiries" ON public.admission_inquiries;
+CREATE POLICY "Allow public insert to admission_inquiries" 
+ON public.admission_inquiries
+FOR INSERT 
+TO anon, authenticated
+WITH CHECK (true);
+
+-- Allow public lookup of submitted status with their tracking_id
+DROP POLICY IF EXISTS "Allow public select by tracking_id" ON public.admission_inquiries;
+CREATE POLICY "Allow public select by tracking_id" 
+ON public.admission_inquiries
+FOR SELECT 
+TO anon, authenticated
+USING (true);`;
+
+  const copySql = () => {
+    navigator.clipboard.writeText(sqlPrompt);
+    setCopiedSql(true);
+    setTimeout(() => setCopiedSql(false), 2500);
+  };
+
   const copyEnvSnippet = () => {
-    const snippet = `# Supabase Environment Variables for Vercel & Vite
-VITE_SUPABASE_URL=https://your-project-id.supabase.co
+    const snippet = `VITE_SUPABASE_URL=https://your-project-id.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-public-key`;
     navigator.clipboard.writeText(snippet);
     setCopiedEnv(true);
-    setTimeout(() => setCopiedEnv(false), 2000);
+    setTimeout(() => setCopiedEnv(false), 2500);
   };
 
   return (
@@ -56,86 +100,86 @@ VITE_SUPABASE_ANON_KEY=your-anon-public-key`;
               }`}
             >
               <Database className="w-3.5 h-3.5" />
-              <span>{isDbLive ? 'Supabase Connected' : 'Supabase Ready (Awaiting Credentials)'}</span>
+              <span>{isDbLive ? 'Supabase Credentials Detected' : 'Supabase Credentials Missing in Build'}</span>
             </span>
           </div>
           <h3 className="text-xl sm:text-2xl font-bold text-white">
-            Supabase Database & Vercel Deployment Architecture
+            Supabase Prompt & Table Setup (5-Field Admission Form)
           </h3>
           <p className="text-xs sm:text-sm text-slate-300">
-            This application is engineered with the official <code className="text-amber-400">@supabase/supabase-js</code> client,
-            clean environment variable isolation, and a complete SQL migration file ready for Supabase & Vercel.
+            Copy the prompt below and paste it directly into your <strong>Supabase Dashboard &rarr; SQL Editor</strong> to create the table.
           </p>
         </div>
 
-        {/* How it works */}
-        <div className="space-y-4 text-xs sm:text-sm text-slate-300">
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-            <div className="font-bold text-white flex items-center gap-2">
-              <Server className="w-4 h-4 text-amber-400" />
-              <span>1. Environment Variables in .env / Vercel Dashboard</span>
-            </div>
-            <p className="text-xs text-slate-400">
-              In your Supabase project (Project Settings &rarr; API), copy your Project URL and anon public key.
-              Then add them to your local <code className="text-slate-200">.env</code> or Vercel Environment Variables:
-            </p>
-            <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 font-mono text-xs text-amber-300 relative">
-              <pre className="overflow-x-auto whitespace-pre">
-{`VITE_SUPABASE_URL=https://<your-project>.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJh...`}
-              </pre>
-              <button
-                onClick={copyEnvSnippet}
-                className="absolute top-2 right-2 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-200 flex items-center gap-1"
-              >
-                <Copy className="w-3 h-3 text-amber-400" />
-                <span>{copiedEnv ? 'Copied' : 'Copy'}</span>
-              </button>
-            </div>
+        {/* SQL Prompt Box */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <FileCode className="w-4 h-4" />
+              SQL Prompt to Paste in Supabase
+            </span>
+            <button
+              onClick={copySql}
+              className="px-3 py-1.5 rounded-lg bg-amber-400 text-slate-950 font-bold text-xs hover:bg-amber-300 flex items-center gap-1.5 shadow"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>{copiedSql ? 'Copied Prompt!' : 'Copy SQL Prompt'}</span>
+            </button>
           </div>
 
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-            <div className="font-bold text-white flex items-center gap-2">
-              <FileCode className="w-4 h-4 text-emerald-400" />
-              <span>2. Ready-to-Run SQL Schema (<code className="text-emerald-300">supabase/schema.sql</code>)</span>
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 max-h-56 overflow-y-auto text-[11px] font-mono text-emerald-300">
+            <pre className="whitespace-pre">{sqlPrompt}</pre>
+          </div>
+        </div>
+
+        {/* Status Behavior Explanation */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-1">
+            <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>"Saved in Supabase Successfully"</span>
             </div>
-            <p className="text-xs text-slate-400">
-              The project includes a complete migration script at <code className="text-slate-200 font-mono">/supabase/schema.sql</code> provisioning:
+            <p className="text-slate-300 text-[11px]">
+              Displayed whenever the 5 fields are successfully committed into your Supabase database table.
             </p>
-            <ul className="list-disc pl-5 space-y-1 text-xs text-slate-300">
-              <li>
-                <strong className="text-white">admission_enquiries</strong>: saves student name, class applying for, guardian info, contact numbers, previous percentage, tracking ID, and admission status with Row Level Security (RLS).
-              </li>
-              <li>
-                <strong className="text-white">contact_messages</strong>: captures inquiry messages from parents.
-              </li>
-              <li>
-                <strong className="text-white">announcements</strong>: live academic bulletin board with pre-seeded circulars.
-              </li>
-            </ul>
           </div>
 
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-            <div className="font-bold text-white flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-blue-400" />
-              <span>3. Vercel Deployment Configuration (<code className="text-blue-300">vercel.json</code>)</span>
+          <div className="p-3.5 rounded-xl bg-rose-950/40 border border-rose-500/40 space-y-1">
+            <div className="font-bold text-rose-300 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-rose-400" />
+              <span>"Not Saved Yet"</span>
             </div>
-            <p className="text-xs text-slate-400">
-              A pre-configured <code className="text-slate-200 font-mono">vercel.json</code> has been included in the root directory.
-              Simply push your repo to GitHub and import into Vercel; build command is <code className="text-amber-400 font-mono">npm run build</code> and output directory is <code className="text-amber-400 font-mono">dist</code>.
+            <p className="text-slate-300 text-[11px]">
+              Displayed whenever Supabase rejected the insert, the table is missing, or Vercel credentials are not active.
             </p>
           </div>
         </div>
 
-        <div className="pt-2 flex justify-between items-center border-t border-slate-800 text-xs">
-          <span className="text-slate-400">
-            Current Status: {isDbLive ? '⚡ Live Supabase Operations Active' : '💾 Safe Local Queue Active (Auto-connects on env load)'}
-          </span>
+        {/* Vercel Redeployment Notice */}
+        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="font-bold text-white flex items-center gap-1.5">
+              <RefreshCw className="w-4 h-4 text-amber-400" />
+              <span>Vercel Environment Variables Reminder</span>
+            </span>
+            <button
+              onClick={copyEnvSnippet}
+              className="text-amber-400 hover:underline text-[11px]"
+            >
+              {copiedEnv ? 'Copied Keys' : 'Copy Key Template'}
+            </button>
+          </div>
+          <p className="text-slate-300 text-[11px] leading-relaxed">
+            If you added <code className="text-amber-300">VITE_SUPABASE_URL</code> and <code className="text-amber-300">VITE_SUPABASE_ANON_KEY</code> to Vercel after your initial deploy, click <strong>Redeploy</strong> in Vercel so Vite can compile them into your website bundle.
+          </p>
+        </div>
+
+        <div className="pt-2 flex justify-end">
           <button
             onClick={onClose}
-            className="px-5 py-2.5 rounded-xl font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 transition-colors"
+            className="px-5 py-2 rounded-xl font-bold bg-slate-800 text-white hover:bg-slate-700 text-xs"
           >
-            Got It
+            Close
           </button>
         </div>
       </div>

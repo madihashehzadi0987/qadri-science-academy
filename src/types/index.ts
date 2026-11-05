@@ -73,32 +73,15 @@ export interface FacultyMember {
   avatar: string;
 }
 
+// Exactly 5 fields for the Admission Form
 export interface AdmissionEnquiryData {
   id?: string;
-  student_name: string;
-  dob: string;
-  gender: 'male' | 'female';
-  grade_applying: string;
-  guardian_name: string;
-  guardian_relation: string;
-  phone: string;
-  email: string;
-  previous_school: string;
-  previous_marks_percentage: string;
-  stream_interest?: string;
-  address: string;
-  notes?: string;
+  student_name: string;      // Field 1: Student Full Name
+  guardian_name: string;     // Field 2: Father / Guardian Name
+  grade_applying: string;    // Field 3: Class / Grade Applying For (Classes 1–10 & Matric)
+  phone: string;             // Field 4: Contact / WhatsApp Number
+  address: string;           // Field 5: City / Residential Address
   tracking_id?: string;
-  status?: 'pending' | 'reviewed' | 'interview_scheduled' | 'admitted';
-  created_at?: string;
-}
-
-export interface ContactMessageData {
-  id?: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  subject: string;
-  message: string;
+  status?: string;
   created_at?: string;
 }

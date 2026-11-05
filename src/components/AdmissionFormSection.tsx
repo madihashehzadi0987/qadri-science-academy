@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Send,
   CheckCircle2,
   AlertCircle,
-  FileText,
   Copy,
   Printer,
   Sparkles,
@@ -12,12 +11,18 @@ import {
   User,
   GraduationCap,
   Phone,
-  Mail,
   Home,
-  Clock,
+  RefreshCw,
+  Key,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
-import { submitAdmissionEnquiry, isSupabaseConfigured } from '../lib/supabase';
-import { AdmissionEnquiryData } from '../types';
+import {
+  submitAdmissionEnquiry,
+  getSupabaseConfig,
+  testSupabaseConnection,
+} from '../lib/supabase';
 
 interface AdmissionFormProps {
   initialGrade?: string;
@@ -28,32 +33,79 @@ export const AdmissionFormSection: React.FC<AdmissionFormProps> = ({
   initialGrade,
   onOpenSupabaseGuide,
 }) => {
+  // Exactly 5 Fields as requested
   const [formData, setFormData] = useState({
     student_name: '',
-    dob: '',
-    gender: 'male' as 'male' | 'female',
-    grade_applying: initialGrade || 'Class 9th (Matric Science - Pre-Medical)',
     guardian_name: '',
-    guardian_relation: 'Father',
+    grade_applying: initialGrade || 'Class 9th (Matric Science)',
     phone: '',
-    email: '',
-    previous_school: '',
-    previous_marks_percentage: '',
-    stream_interest: 'Science (Biology)',
     address: '',
-    notes: '',
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionSuccess, setSubmissionSuccess] = useState<{
     trackingId: string;
-    source: 'supabase' | 'local';
-    error?: string;
+    tableName?: string;
+    statusText: 'Saved in Supabase Successfully';
     submittedData: typeof formData;
   } | null>(null);
 
+  const [submissionStatus, setSubmissionStatus] = useState<{
+    statusText: 'Saved in Supabase Successfully' | 'Not Saved Yet';
+    message: string;
+  } | null>(null);
+
   const [copied, setCopied] = useState(false);
-  const isDbLive = isSupabaseConfigured();
+
+  // Live Connection Diagnostics
+  const [dbStatus, setDbStatus] = useState<{
+    tested: boolean;
+    loading: boolean;
+    connected: boolean;
+    url: string;
+    tableFound?: string;
+    error?: string;
+  }>({
+    tested: false,
+    loading: false,
+    connected: false,
+    url: '',
+  });
+
+  const [showOverrideInputs, setShowOverrideInputs] = useState(false);
+  const [overrideUrl, setOverrideUrl] = useState('');
+  const [overrideKey, setOverrideKey] = useState('');
+  const [overrideMessage, setOverrideMessage] = useState('');
+
+  const config = getSupabaseConfig();
+  const isDbLive = config.isConfigured;
+
+  useEffect(() => {
+    checkConnection();
+  }, []);
+
+  const checkConnection = async () => {
+    setDbStatus((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await testSupabaseConnection();
+      setDbStatus({
+        tested: true,
+        loading: false,
+        connected: res.connected,
+        url: res.url,
+        tableFound: res.tableFound,
+        error: res.error,
+      });
+    } catch (err: any) {
+      setDbStatus({
+        tested: true,
+        loading: false,
+        connected: false,
+        url: config.url || 'Not set',
+        error: err?.message || 'Connection test failed',
+      });
+    }
+  };
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -68,19 +120,37 @@ export const AdmissionFormSection: React.FC<AdmissionFormProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSubmissionStatus(null);
 
     try {
       const result = await submitAdmissionEnquiry(formData);
+
       if (result.success) {
+        // Saved in Supabase Successfully
         setSubmissionSuccess({
           trackingId: result.trackingId,
-          source: result.source,
-          error: result.error,
+          tableName: result.tableName,
+          statusText: 'Saved in Supabase Successfully',
           submittedData: { ...formData },
+        });
+        setSubmissionStatus({
+          statusText: 'Saved in Supabase Successfully',
+          message: `Saved in Supabase Successfully (Table: ${result.tableName || 'admission_inquiries'}, ID: ${result.trackingId})`,
+        });
+      } else {
+        // Not Saved Yet
+        setSubmissionSuccess(null);
+        setSubmissionStatus({
+          statusText: 'Not Saved Yet',
+          message: result.error || 'Not Saved Yet: Supabase rejected the insert or credentials are not active.',
         });
       }
     } catch (err: any) {
-      alert(`Submission error: ${err?.message || 'Please check your inputs'}`);
+      setSubmissionSuccess(null);
+      setSubmissionStatus({
+        statusText: 'Not Saved Yet',
+        message: `Not Saved Yet: ${err?.message || 'Network connection failed.'}`,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -100,445 +170,414 @@ export const AdmissionFormSection: React.FC<AdmissionFormProps> = ({
 
   const resetForm = () => {
     setSubmissionSuccess(null);
+    setSubmissionStatus(null);
     setFormData({
       student_name: '',
-      dob: '',
-      gender: 'male',
-      grade_applying: 'Class 9th (Matric Science - Pre-Medical)',
       guardian_name: '',
-      guardian_relation: 'Father',
+      grade_applying: 'Class 9th (Matric Science)',
       phone: '',
-      email: '',
-      previous_school: '',
-      previous_marks_percentage: '',
-      stream_interest: 'Science (Biology)',
       address: '',
-      notes: '',
     });
+  };
+
+  const saveRuntimeCredentials = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!overrideUrl.trim() || !overrideKey.trim()) return;
+
+    localStorage.setItem('VITE_SUPABASE_URL', overrideUrl.trim());
+    localStorage.setItem('VITE_SUPABASE_ANON_KEY', overrideKey.trim());
+    setOverrideMessage('Credentials saved! Retesting connection...');
+    setTimeout(() => {
+      checkConnection();
+      setOverrideMessage('');
+      setShowOverrideInputs(false);
+    }, 1000);
   };
 
   return (
     <section id="admission-form" className="py-20 bg-slate-900 text-white relative">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         {/* Section Header */}
-        <div className="text-center max-w-3xl mx-auto space-y-3">
+        <div className="text-center space-y-3">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold uppercase tracking-wider">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Admissions 2026–2027</span>
+            <span>Admission 2026–2027</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-            Online <span className="text-amber-400">Admission Enquiry Form</span>
+            Admission <span className="text-amber-400">Enquiry Form</span>
           </h2>
-          <p className="text-slate-300 text-sm sm:text-base leading-relaxed">
-            Fill out the form below to register your student for Classes 1–10 and Matric. Our admissions office will
-            review your credentials and schedule an interactive assessment session.
+          <p className="text-slate-300 text-xs sm:text-sm max-w-xl mx-auto leading-relaxed">
+            Quick 5-field official application form for Classes 1 to 10 and Matric.
           </p>
-
-          {/* Database Connectivity Banner */}
-          <div className="pt-2 flex items-center justify-center">
-            <button
-              onClick={onOpenSupabaseGuide}
-              className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                isDbLive
-                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/80 hover:bg-emerald-900'
-                  : 'bg-slate-950 text-amber-300 border-amber-500/30 hover:border-amber-400'
-              }`}
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>
-                {isDbLive
-                  ? 'Connected to Supabase Database (admission_enquiries table)'
-                  : 'Supabase Ready: Set VITE_SUPABASE_URL in .env / Vercel (Click for Schema)'}
-              </span>
-            </button>
-          </div>
         </div>
+
+        {/* Database Live Status Strip */}
+        <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 shadow-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={`w-3 h-3 rounded-full ${
+                  dbStatus.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+              />
+              <div>
+                <span className="font-bold text-white flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5 text-amber-400" />
+                  Supabase Status:
+                  {dbStatus.loading ? (
+                    <span className="text-slate-400 font-normal">Testing connection...</span>
+                  ) : dbStatus.connected ? (
+                    <span className="text-emerald-400 font-bold">
+                      Connected to {dbStatus.tableFound || 'admission_inquiries'}
+                    </span>
+                  ) : (
+                    <span className="text-amber-400 font-semibold">
+                      {isDbLive ? 'Table not found yet' : 'Credentials not detected on Vercel'}
+                    </span>
+                  )}
+                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  URL: <span className="text-slate-300 font-mono">{config.url || '(not set)'}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={checkConnection}
+                disabled={dbStatus.loading}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white flex items-center gap-1 transition-colors"
+              >
+                <RefreshCw className={`w-3 h-3 ${dbStatus.loading ? 'animate-spin' : ''}`} />
+                <span>Test</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowOverrideInputs(!showOverrideInputs)}
+                className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-400 flex items-center gap-1 transition-colors"
+              >
+                <Key className="w-3 h-3" />
+                <span>Config</span>
+                {showOverrideInputs ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={onOpenSupabaseGuide}
+                className="px-3 py-1.5 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 text-amber-300 font-semibold flex items-center gap-1"
+              >
+                <HelpCircle className="w-3 h-3" />
+                <span>SQL Script</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Browser Config Drawer */}
+          {showOverrideInputs && (
+            <form onSubmit={saveRuntimeCredentials} className="mt-3 pt-3 border-t border-slate-800 space-y-3">
+              <div className="text-xs text-slate-300 font-semibold">
+                Direct Supabase Key Setup (Runs in your browser instantly):
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-slate-400 mb-1">Project URL</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="https://your-id.supabase.co"
+                    value={overrideUrl}
+                    onChange={(e) => setOverrideUrl(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Anon Public Key</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="eyJh..."
+                    value={overrideKey}
+                    onChange={(e) => setOverrideKey(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              {overrideMessage && (
+                <div className="text-xs text-emerald-400 font-medium">{overrideMessage}</div>
+              )}
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-amber-400 text-slate-950 font-bold text-xs hover:bg-amber-300"
+                >
+                  Save & Connect
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+
+        {/* ALWAYS SHOW THE STATUS MESSAGE */}
+        {submissionStatus && (
+          <div
+            className={`p-4 sm:p-5 rounded-2xl border-2 transition-all animate-in fade-in ${
+              submissionStatus.statusText === 'Saved in Supabase Successfully'
+                ? 'bg-emerald-950/60 border-emerald-500/80 text-emerald-200'
+                : 'bg-rose-950/60 border-rose-500/80 text-rose-200'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              {submissionStatus.statusText === 'Saved in Supabase Successfully' ? (
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0" />
+              ) : (
+                <AlertCircle className="w-6 h-6 text-rose-400 flex-shrink-0" />
+              )}
+              <div>
+                <h4 className="text-base font-extrabold tracking-wide">
+                  {submissionStatus.statusText}
+                </h4>
+                <p className="text-xs mt-0.5 opacity-90 leading-relaxed font-mono">
+                  {submissionStatus.message}
+                </p>
+              </div>
+            </div>
+
+            {submissionStatus.statusText === 'Not Saved Yet' && (
+              <div className="mt-3 pt-3 border-t border-rose-800/60 flex flex-wrap items-center gap-3 text-xs">
+                <button
+                  type="button"
+                  onClick={onOpenSupabaseGuide}
+                  className="px-3 py-1 rounded bg-rose-900/80 hover:bg-rose-800 text-white font-semibold"
+                >
+                  View SQL to Create Table in Supabase &rarr;
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowOverrideInputs(true)}
+                  className="text-amber-300 hover:underline"
+                >
+                  Enter credentials in browser &rarr;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* If Form Submitted Successfully -> Display Receipt */}
         {submissionSuccess ? (
-          <div className="bg-slate-950 border-2 border-amber-400/60 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-200">
-            <div className="text-center space-y-3">
-              <div className="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-400/40 flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-8 h-8" />
+          <div className="bg-slate-950 border-2 border-emerald-500/60 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 animate-in zoom-in-95 duration-200">
+            {/* Top Status Banner */}
+            <div className="text-center space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-sm font-extrabold uppercase tracking-wide">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span>Saved in Supabase Successfully</span>
               </div>
-              <h3 className="text-2xl font-bold text-white">Admission Enquiry Registered!</h3>
-              <p className="text-xs sm:text-sm text-slate-300 max-w-lg mx-auto">
-                Thank you for applying to Qadri Science Academy. Your application has been logged into the admissions
-                system.
+              <p className="text-xs text-slate-300">
+                Your admission enquiry has been saved to your Supabase table{' '}
+                <strong className="text-amber-400 font-mono">{submissionSuccess.tableName}</strong>.
               </p>
             </div>
 
-            {/* Tracking ID Hero Box */}
-            <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-6 text-center space-y-3">
+            {/* Tracking ID Box */}
+            <div className="bg-slate-900 border border-amber-500/40 rounded-2xl p-5 text-center space-y-2">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                Official Application Tracking ID
+                Official Tracking ID
               </span>
-              <div className="text-3xl sm:text-4xl font-extrabold text-amber-400 font-mono tracking-wider">
+              <div className="text-3xl font-extrabold text-amber-400 font-mono tracking-wider">
                 {submissionSuccess.trackingId}
               </div>
-              <p className="text-xs text-slate-400">
-                Please save this reference number. You can use it to track your evaluation status at any time.
-              </p>
-
-              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <div className="flex items-center justify-center gap-3 pt-2">
                 <button
+                  type="button"
                   onClick={copyTrackingId}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 hover:text-white border border-slate-700 flex items-center gap-1.5 transition-colors"
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-200 hover:text-white border border-slate-700 flex items-center gap-1.5 transition-colors"
                 >
-                  <Copy className="w-4 h-4 text-amber-400" />
-                  <span>{copied ? 'Copied to Clipboard!' : 'Copy Reference ID'}</span>
+                  <Copy className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{copied ? 'Copied!' : 'Copy Reference ID'}</span>
                 </button>
                 <button
+                  type="button"
                   onClick={printReceipt}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 text-slate-200 hover:text-white border border-slate-700 flex items-center gap-1.5 transition-colors"
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-200 hover:text-white border border-slate-700 flex items-center gap-1.5 transition-colors"
                 >
-                  <Printer className="w-4 h-4 text-blue-400" />
+                  <Printer className="w-3.5 h-3.5 text-blue-400" />
                   <span>Print Receipt</span>
                 </button>
               </div>
             </div>
 
-            {/* Application Summary Card */}
-            <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4 text-xs sm:text-sm">
-              <div className="font-bold text-white border-b border-slate-800 pb-2 flex items-center justify-between">
-                <span>Summary of Submitted Details</span>
-                <span className="text-amber-400 font-normal text-xs">
-                  Storage: {submissionSuccess.source === 'supabase' ? 'Supabase Cloud DB' : 'Local Queue (Pending Supabase Sync)'}
-                </span>
+            {/* 5 Submitted Fields Summary */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 space-y-3 text-xs">
+              <div className="font-bold text-white border-b border-slate-800 pb-2">
+                Submitted Student Information (5 Fields)
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-3 gap-x-6 text-slate-300">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-slate-300">
                 <div>
-                  <span className="text-slate-400 block text-xs">Student Name:</span>
+                  <span className="text-slate-400 block text-[11px]">1. Student Full Name:</span>
                   <span className="font-semibold text-white">{submissionSuccess.submittedData.student_name}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-xs">Grade Applying For:</span>
-                  <span className="font-semibold text-white">{submissionSuccess.submittedData.grade_applying}</span>
+                  <span className="text-slate-400 block text-[11px]">2. Father / Guardian Name:</span>
+                  <span className="font-semibold text-white">{submissionSuccess.submittedData.guardian_name}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-xs">Guardian Name:</span>
-                  <span className="font-semibold text-white">{submissionSuccess.submittedData.guardian_name} ({submissionSuccess.submittedData.guardian_relation})</span>
+                  <span className="text-slate-400 block text-[11px]">3. Class Applying For:</span>
+                  <span className="font-semibold text-amber-400">{submissionSuccess.submittedData.grade_applying}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-xs">Contact Phone:</span>
+                  <span className="text-slate-400 block text-[11px]">4. Contact / WhatsApp:</span>
                   <span className="font-semibold text-white">{submissionSuccess.submittedData.phone}</span>
                 </div>
-                <div>
-                  <span className="text-slate-400 block text-xs">Email Address:</span>
-                  <span className="font-semibold text-white">{submissionSuccess.submittedData.email}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-xs">Previous Percentage:</span>
-                  <span className="font-semibold text-white">{submissionSuccess.submittedData.previous_marks_percentage || 'N/A'}</span>
+                <div className="sm:col-span-2">
+                  <span className="text-slate-400 block text-[11px]">5. City / Address:</span>
+                  <span className="font-semibold text-white">{submissionSuccess.submittedData.address}</span>
                 </div>
               </div>
-            </div>
-
-            {/* Next Steps Guidance */}
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-slate-300 space-y-2">
-              <strong className="text-amber-400 flex items-center gap-1.5 font-bold">
-                <Clock className="w-4 h-4" /> What Happens Next?
-              </strong>
-              <p>
-                1. Our Admissions Officer will contact you on <strong>{submissionSuccess.submittedData.phone}</strong> within 24 hours.
-              </p>
-              <p>
-                2. Please bring original birth certificate, previous school marksheet, and 2 passport photos for the assessment test on Saturday at 9:00 AM.
-              </p>
             </div>
 
             <div className="text-center pt-2">
               <button
+                type="button"
                 onClick={resetForm}
                 className="px-6 py-2.5 rounded-xl text-xs font-bold bg-amber-400 text-slate-950 hover:bg-amber-300 transition-colors"
               >
-                Submit Another Enquiry
+                Submit Another Admission Enquiry
               </button>
             </div>
           </div>
         ) : (
-          /* Main Interactive Form */
+          /* EXACTLY 1 FORM WITH EXACTLY 5 FIELDS */
           <form
             onSubmit={handleSubmit}
-            className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-8"
+            className="bg-slate-950 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-5"
           >
-            {/* Step 1: Student Information */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-slate-800 pb-2">
-                <User className="w-4 h-4" />
-                <span>1. Student Information</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Student Full Name <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    name="student_name"
-                    value={formData.student_name}
-                    onChange={handleInputChange}
-                    placeholder="e.g. Ali Raza"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Date of Birth <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    name="dob"
-                    value={formData.dob}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Gender <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    name="gender"
-                    value={formData.gender}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="male">Male (Boys Section)</option>
-                    <option value="female">Female (Girls Section)</option>
-                  </select>
-                </div>
-              </div>
+            {/* Field 1: Student Full Name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-amber-400" />
+                <span>1. Student Full Name</span>
+                <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                name="student_name"
+                value={formData.student_name}
+                onChange={handleInputChange}
+                placeholder="Enter student full name (e.g. Muhammad Ali)"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400 transition-colors"
+              />
             </div>
 
-            {/* Step 2: Academic Program Selection */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-slate-800 pb-2">
-                <GraduationCap className="w-4 h-4" />
-                <span>2. Grade & Academic Wing Selection</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Grade / Class Applying For <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    name="grade_applying"
-                    value={formData.grade_applying}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400"
-                  >
-                    <optgroup label="Secondary & Matriculation (BISE)">
-                      <option value="Class 9th (Matric Science - Pre-Medical)">
-                        Class 9th (Matric Science - Biology Group)
-                      </option>
-                      <option value="Class 9th (Matric Science - Computer Science)">
-                        Class 9th (Matric Science - Computer Science Group)
-                      </option>
-                      <option value="Class 10th (Matric Science - Pre-Medical)">
-                        Class 10th (Matric Science - Biology Group)
-                      </option>
-                      <option value="Class 10th (Matric Science - Computer Science)">
-                        Class 10th (Matric Science - Computer Science Group)
-                      </option>
-                    </optgroup>
-                    <optgroup label="Middle Wing">
-                      <option value="Class 8">Class 8 (Pre-Matric)</option>
-                      <option value="Class 7">Class 7</option>
-                      <option value="Class 6">Class 6</option>
-                    </optgroup>
-                    <optgroup label="Junior Wing">
-                      <option value="Class 5">Class 5</option>
-                      <option value="Class 4">Class 4</option>
-                      <option value="Class 3">Class 3</option>
-                      <option value="Class 2">Class 2</option>
-                      <option value="Class 1">Class 1</option>
-                    </optgroup>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Academic Stream Interest
-                  </label>
-                  <select
-                    name="stream_interest"
-                    value={formData.stream_interest}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="Science (Biology / Medical)">Medical & Biology Track</option>
-                    <option value="Computer Science / Engineering">Engineering & Computer Science Track</option>
-                    <option value="General Science Foundation">General Science Foundation (Junior/Middle)</option>
-                    <option value="Evening Board Test Series Only">Evening Board Mock Test Batch Only</option>
-                  </select>
-                </div>
-              </div>
+            {/* Field 2: Father / Guardian Name */}
+            <div>
+              <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-amber-400" />
+                <span>2. Father / Guardian Name</span>
+                <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                name="guardian_name"
+                value={formData.guardian_name}
+                onChange={handleInputChange}
+                placeholder="Enter father or guardian name (e.g. Tariq Mehmood)"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400 transition-colors"
+              />
             </div>
 
-            {/* Step 3: Guardian Details */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-slate-800 pb-2">
-                <Home className="w-4 h-4" />
-                <span>3. Guardian & Contact Details</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Father / Guardian Name <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    name="guardian_name"
-                    value={formData.guardian_name}
-                    onChange={handleInputChange}
-                    placeholder="e.g. Tariq Mehmood"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Relationship <span className="text-rose-400">*</span>
-                  </label>
-                  <select
-                    name="guardian_relation"
-                    value={formData.guardian_relation}
-                    onChange={handleInputChange}
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="Father">Father</option>
-                    <option value="Mother">Mother</option>
-                    <option value="Legal Guardian">Legal Guardian</option>
-                    <option value="Elder Brother">Elder Brother</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    WhatsApp / Mobile Number <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="tel"
-                    required
-                    name="phone"
-                    value={formData.phone}
-                    onChange={handleInputChange}
-                    placeholder="+92 300 1234567"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Guardian Email Address <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    name="email"
-                    value={formData.email}
-                    onChange={handleInputChange}
-                    placeholder="guardian@example.com"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Residential Address & City <span className="text-rose-400">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    name="address"
-                    value={formData.address}
-                    onChange={handleInputChange}
-                    placeholder="House #, Street, Colony / Area, City"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
+            {/* Field 3: Class / Grade Applying For */}
+            <div>
+              <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                <GraduationCap className="w-3.5 h-3.5 text-amber-400" />
+                <span>3. Class / Grade Applying For</span>
+                <span className="text-rose-400">*</span>
+              </label>
+              <select
+                name="grade_applying"
+                value={formData.grade_applying}
+                onChange={handleInputChange}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400 transition-colors"
+              >
+                <optgroup label="Matriculation & Secondary (BISE)">
+                  <option value="Class 9th (Matric Science - Biology)">Class 9th (Matric Science - Biology Group)</option>
+                  <option value="Class 9th (Matric Science - Computer Science)">Class 9th (Matric Science - Computer Science Group)</option>
+                  <option value="Class 10th (Matric Science - Biology)">Class 10th (Matric Science - Biology Group)</option>
+                  <option value="Class 10th (Matric Science - Computer Science)">Class 10th (Matric Science - Computer Science Group)</option>
+                </optgroup>
+                <optgroup label="Middle Wing">
+                  <option value="Class 8 (Pre-Matric)">Class 8 (Pre-Matric)</option>
+                  <option value="Class 7">Class 7</option>
+                  <option value="Class 6">Class 6</option>
+                </optgroup>
+                <optgroup label="Junior Wing">
+                  <option value="Class 5">Class 5</option>
+                  <option value="Class 4">Class 4</option>
+                  <option value="Class 3">Class 3</option>
+                  <option value="Class 2">Class 2</option>
+                  <option value="Class 1">Class 1</option>
+                </optgroup>
+              </select>
             </div>
 
-            {/* Step 4: Academic Background */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider border-b border-slate-800 pb-2">
-                <FileText className="w-4 h-4" />
-                <span>4. Previous Academic Background</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Previous School / Institute Name
-                  </label>
-                  <input
-                    type="text"
-                    name="previous_school"
-                    value={formData.previous_school}
-                    onChange={handleInputChange}
-                    placeholder="e.g. Army Public School / Govt High School"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Previous Grade Marks / Percentage (for Scholarship)
-                  </label>
-                  <input
-                    type="text"
-                    name="previous_marks_percentage"
-                    value={formData.previous_marks_percentage}
-                    onChange={handleInputChange}
-                    placeholder="e.g. 92% or 460/500"
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Special Remarks or Questions (Optional)
-                  </label>
-                  <textarea
-                    rows={2}
-                    name="notes"
-                    value={formData.notes}
-                    onChange={handleInputChange}
-                    placeholder="Any specific questions, hostel inquiries, or medical considerations..."
-                    className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
+            {/* Field 4: Contact / WhatsApp Number */}
+            <div>
+              <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                <Phone className="w-3.5 h-3.5 text-amber-400" />
+                <span>4. Contact / WhatsApp Number</span>
+                <span className="text-rose-400">*</span>
+              </label>
+              <input
+                type="tel"
+                required
+                name="phone"
+                value={formData.phone}
+                onChange={handleInputChange}
+                placeholder="+92 3XX XXXXXXX"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400 transition-colors"
+              />
             </div>
 
-            {/* Submit Button & Assurance */}
-            <div className="pt-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+            {/* Field 5: City / Residential Address */}
+            <div>
+              <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+                <Home className="w-3.5 h-3.5 text-amber-400" />
+                <span>5. City / Residential Address</span>
+                <span className="text-rose-400">*</span>
+              </label>
+              <textarea
+                rows={2}
+                required
+                name="address"
+                value={formData.address}
+                onChange={handleInputChange}
+                placeholder="Enter residential area / street, and city (e.g. Madina Colony, Multan)"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 text-sm focus:outline-none focus:border-amber-400 transition-colors"
+              />
+            </div>
+
+            {/* Submit Button */}
+            <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                <span>Your application details are secure and treated with strict confidentiality.</span>
+                <span>Directly records into Supabase & confirms status instantly.</span>
               </div>
 
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full sm:w-auto px-8 py-3.5 rounded-xl font-bold text-sm bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-xl shadow-amber-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+                className="w-full sm:w-auto px-8 py-3 rounded-xl font-bold text-sm bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-xl shadow-amber-500/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
               >
                 {isSubmitting ? (
-                  <span>Saving to Database...</span>
+                  <span>Saving to Supabase...</span>
                 ) : (
                   <>
-                    <span>Submit Official Admission Enquiry</span>
+                    <span>Submit Admission Form</span>
                     <Send className="w-4 h-4" />
                   </>
                 )}

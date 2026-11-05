@@ -1,187 +1,296 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { AdmissionEnquiryData, ContactMessageData } from '../types';
+import { AdmissionEnquiryData } from '../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Retrieve credentials from Vite env or runtime localStorage override
+export const getSupabaseConfig = () => {
+  const envUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim().replace(/^["']|["']$/g, '');
+  const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim().replace(/^["']|["']$/g, '');
 
-// Check if valid Supabase credentials have been injected
-export const isSupabaseConfigured = (): boolean => {
-  return Boolean(
-    supabaseUrl &&
-    supabaseAnonKey &&
-    supabaseUrl.startsWith('https://') &&
-    !supabaseUrl.includes('your-project-id') &&
-    supabaseAnonKey !== 'your-anon-public-key' &&
-    supabaseAnonKey.length > 20
+  let localUrl = '';
+  let localKey = '';
+  try {
+    localUrl = (localStorage.getItem('VITE_SUPABASE_URL') || '').trim().replace(/^["']|["']$/g, '');
+    localKey = (localStorage.getItem('VITE_SUPABASE_ANON_KEY') || '').trim().replace(/^["']|["']$/g, '');
+  } catch (e) {
+    // localStorage not accessible
+  }
+
+  const url = envUrl || localUrl;
+  const key = envKey || localKey;
+
+  const isConfigured = Boolean(
+    url &&
+    key &&
+    url.startsWith('https://') &&
+    !url.includes('your-project-id') &&
+    key !== 'your-anon-public-key' &&
+    key.length > 20
   );
+
+  return {
+    url,
+    key,
+    isConfigured,
+    source: envUrl ? 'env' : localUrl ? 'local_storage' : 'none',
+  };
 };
 
-// Singleton client instance
-export const supabase: SupabaseClient | null = isSupabaseConfigured()
-  ? createClient(supabaseUrl, supabaseAnonKey, {
+export const isSupabaseConfigured = (): boolean => {
+  return getSupabaseConfig().isConfigured;
+};
+
+// Create a Supabase client instance dynamically
+export const getSupabaseClient = (): SupabaseClient | null => {
+  const config = getSupabaseConfig();
+  if (!config.isConfigured) return null;
+
+  try {
+    return createClient(config.url, config.key, {
       auth: {
-        persistSession: true,
+        persistSession: false,
       },
-    })
-  : null;
+    });
+  } catch (err) {
+    console.error('Failed to initialize Supabase client:', err);
+    return null;
+  }
+};
 
-const STORAGE_ENQUIRIES_KEY = 'qsa_admission_enquiries';
-const STORAGE_MESSAGES_KEY = 'qsa_contact_messages';
+// Candidate table names to support both UK 'enquiries' and US/common 'inquiries'
+export const ADMISSION_TABLE_CANDIDATES = ['admission_inquiries', 'admission_enquiries'] as const;
+let cachedAdmissionTable: string | null = null;
 
-// Generate a professional human-readable tracking ID (e.g., QSA-2026-8472)
+// Generate tracking ID
 export const generateTrackingId = (): string => {
   const randomNum = Math.floor(1000 + Math.random() * 9000);
   return `QSA-2026-${randomNum}`;
 };
 
+export interface SubmitAdmissionResult {
+  success: boolean;
+  trackingId: string;
+  tableName?: string;
+  statusText: 'Saved in Supabase Successfully' | 'Not Saved Yet';
+  error?: string;
+  details?: any;
+}
+
 /**
- * Submit an admission enquiry to Supabase.
- * If Supabase is configured, records to the `admission_enquiries` table.
- * If not yet configured, cleanly stores to localStorage and informs the user.
+ * Submit the 5-field admission enquiry form to Supabase.
+ * Exactly 5 fields:
+ * 1. student_name
+ * 2. guardian_name
+ * 3. grade_applying
+ * 4. phone
+ * 5. address
  */
 export async function submitAdmissionEnquiry(
-  data: Omit<AdmissionEnquiryData, 'id' | 'created_at' | 'tracking_id' | 'status'>
-): Promise<{ success: boolean; trackingId: string; source: 'supabase' | 'local'; error?: string }> {
+  data: Omit<AdmissionEnquiryData, 'id' | 'created_at' | 'tracking_id'>
+): Promise<SubmitAdmissionResult> {
+  const config = getSupabaseConfig();
+
+  if (!config.isConfigured) {
+    return {
+      success: false,
+      trackingId: '',
+      statusText: 'Not Saved Yet',
+      error:
+        'Not Saved Yet: Supabase credentials (VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY) are missing. In Vercel, set these in Project Settings and click Redeploy, or click "Config" above to enter them directly in your browser.',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      success: false,
+      trackingId: '',
+      statusText: 'Not Saved Yet',
+      error: 'Not Saved Yet: Could not connect to Supabase client with the provided credentials.',
+    };
+  }
+
   const trackingId = generateTrackingId();
   const timestamp = new Date().toISOString();
 
-  const record: AdmissionEnquiryData = {
-    ...data,
+  // Exactly 5 user fields + tracking_id + created_at
+  const payload: Record<string, any> = {
     tracking_id: trackingId,
-    status: 'pending',
+    student_name: data.student_name.trim(),
+    guardian_name: data.guardian_name.trim(),
+    grade_applying: data.grade_applying.trim(),
+    phone: data.phone.trim(),
+    address: data.address.trim(),
     created_at: timestamp,
   };
 
-  // If Supabase is connected, attempt direct write
-  if (isSupabaseConfigured() && supabase) {
-    try {
-      const { data: inserted, error } = await supabase
-        .from('admission_enquiries')
-        .insert([record])
-        .select()
-        .single();
+  const tablesToTry = cachedAdmissionTable
+    ? [cachedAdmissionTable, ...ADMISSION_TABLE_CANDIDATES.filter((t) => t !== cachedAdmissionTable)]
+    : ADMISSION_TABLE_CANDIDATES;
 
-      if (error) {
-        console.warn('Supabase insert failed, falling back to local queue:', error.message);
-        saveToLocalStorage(STORAGE_ENQUIRIES_KEY, record);
+  let lastError: any = null;
+
+  for (const tableName of tablesToTry) {
+    try {
+      const { error } = await client.from(tableName).insert([payload]);
+
+      if (!error) {
+        cachedAdmissionTable = tableName;
         return {
           success: true,
           trackingId,
-          source: 'local',
-          error: `Saved locally (Supabase table error: ${error.message}). Please ensure 'admission_enquiries' table is created.`,
+          tableName,
+          statusText: 'Saved in Supabase Successfully',
         };
       }
 
-      return {
-        success: true,
-        trackingId: inserted?.tracking_id || trackingId,
-        source: 'supabase',
-      };
-    } catch (err: any) {
-      console.error('Error contacting Supabase:', err);
-      saveToLocalStorage(STORAGE_ENQUIRIES_KEY, record);
-      return {
-        success: true,
-        trackingId,
-        source: 'local',
-        error: err?.message,
-      };
-    }
-  }
+      lastError = error;
 
-  // Fallback: Safe Local Storage with deployment readiness instructions
-  saveToLocalStorage(STORAGE_ENQUIRIES_KEY, record);
-  return {
-    success: true,
-    trackingId,
-    source: 'local',
-  };
-}
-
-/**
- * Submit general contact inquiry message
- */
-export async function submitContactMessage(
-  data: Omit<ContactMessageData, 'id' | 'created_at'>
-): Promise<{ success: boolean; source: 'supabase' | 'local'; error?: string }> {
-  const timestamp = new Date().toISOString();
-  const record: ContactMessageData = {
-    ...data,
-    created_at: timestamp,
-  };
-
-  if (isSupabaseConfigured() && supabase) {
-    try {
-      const { error } = await supabase.from('contact_messages').insert([record]);
-      if (error) {
-        saveToLocalStorage(STORAGE_MESSAGES_KEY, record);
-        return { success: true, source: 'local', error: error.message };
+      // If table doesn't exist, try the other candidate name
+      if (
+        error.code === '42P01' ||
+        error.message?.toLowerCase().includes('does not exist') ||
+        error.message?.toLowerCase().includes('relation')
+      ) {
+        continue;
       }
-      return { success: true, source: 'supabase' };
+
+      break;
     } catch (err: any) {
-      saveToLocalStorage(STORAGE_MESSAGES_KEY, record);
-      return { success: true, source: 'local', error: err?.message };
+      lastError = err;
     }
   }
 
-  saveToLocalStorage(STORAGE_MESSAGES_KEY, record);
-  return { success: true, source: 'local' };
+  const errorDesc = formatSupabaseError(lastError);
+  console.error('Supabase INSERT failed:', lastError);
+
+  return {
+    success: false,
+    trackingId: '',
+    statusText: 'Not Saved Yet',
+    error: `Not Saved Yet: ${errorDesc}`,
+    details: lastError,
+  };
 }
 
 /**
- * Retrieve admission enquiry by tracking ID
+ * Lookup admission enquiry by tracking ID
  */
 export async function lookupAdmissionEnquiry(
   trackingId: string
 ): Promise<AdmissionEnquiryData | null> {
   const sanitized = trackingId.trim().toUpperCase();
+  const client = getSupabaseClient();
+  if (!client) return null;
 
-  if (isSupabaseConfigured() && supabase) {
+  const tablesToTry = cachedAdmissionTable
+    ? [cachedAdmissionTable, ...ADMISSION_TABLE_CANDIDATES.filter((t) => t !== cachedAdmissionTable)]
+    : ADMISSION_TABLE_CANDIDATES;
+
+  for (const tableName of tablesToTry) {
     try {
-      const { data, error } = await supabase
-        .from('admission_enquiries')
+      const { data, error } = await client
+        .from(tableName)
         .select('*')
         .ilike('tracking_id', sanitized)
         .maybeSingle();
 
       if (!error && data) {
+        cachedAdmissionTable = tableName;
         return data as AdmissionEnquiryData;
       }
     } catch (e) {
-      console.warn('Error querying Supabase for trackingId:', e);
+      // Continue to next table
     }
   }
 
-  // Search local cache
-  const localItems = getFromLocalStorage<AdmissionEnquiryData>(STORAGE_ENQUIRIES_KEY);
-  const found = localItems.find(
-    (item) => item.tracking_id?.toUpperCase() === sanitized
-  );
-  return found || null;
+  return null;
 }
 
 /**
- * Helper to get all stored enquiries (useful for previewing submissions)
+ * Test connectivity and verify existing tables
  */
-export function getLocalEnquiries(): AdmissionEnquiryData[] {
-  return getFromLocalStorage<AdmissionEnquiryData>(STORAGE_ENQUIRIES_KEY);
+export async function testSupabaseConnection(): Promise<{
+  connected: boolean;
+  url: string;
+  tableFound?: string;
+  error?: string;
+}> {
+  const config = getSupabaseConfig();
+  if (!config.isConfigured) {
+    return {
+      connected: false,
+      url: config.url || 'Not set',
+      error: 'Environment variables VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not configured.',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      connected: false,
+      url: config.url,
+      error: 'Unable to initialize client with the specified credentials.',
+    };
+  }
+
+  // Check which admission table exists
+  for (const table of ADMISSION_TABLE_CANDIDATES) {
+    try {
+      const { error } = await client.from(table).select('count', { count: 'exact', head: true });
+      if (!error) {
+        cachedAdmissionTable = table;
+        return {
+          connected: true,
+          url: config.url,
+          tableFound: table,
+        };
+      }
+      if (error && error.code !== '42P01') {
+        cachedAdmissionTable = table;
+        return {
+          connected: true,
+          url: config.url,
+          tableFound: table,
+        };
+      }
+    } catch (e: any) {
+      // Continue
+    }
+  }
+
+  return {
+    connected: false,
+    url: config.url,
+    error: `Connected to Supabase project, but the 'admission_inquiries' table was not found yet. Run the SQL prompt in Supabase SQL editor to create it.`,
+  };
 }
 
-function saveToLocalStorage<T>(key: string, item: T) {
-  try {
-    const existing = getFromLocalStorage<T>(key);
-    existing.unshift(item);
-    localStorage.setItem(key, JSON.stringify(existing));
-  } catch (e) {
-    console.error('LocalStorage write error:', e);
-  }
-}
+/**
+ * Format raw Supabase / Postgres errors into actionable user guidance
+ */
+function formatSupabaseError(err: any): string {
+  if (!err) return 'Unknown database error occurred.';
 
-function getFromLocalStorage<T>(key: string): T[] {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+  const code = err.code || '';
+  const message = err.message || '';
+  const details = err.details || '';
+  const hint = err.hint || '';
+
+  if (code === '42501' || message.toLowerCase().includes('row-level security') || message.toLowerCase().includes('violates row-level security')) {
+    return `Row Level Security (RLS) is blocking public form submissions. Run this in your Supabase SQL Editor: CREATE POLICY "Allow public insert" ON public.admission_inquiries FOR INSERT TO anon, authenticated WITH CHECK (true);`;
   }
+
+  if (code === '42P01' || message.toLowerCase().includes('does not exist')) {
+    return `Table 'admission_inquiries' does not exist in your Supabase project yet. Please copy and run the SQL prompt in your Supabase SQL Editor.`;
+  }
+
+  if (code === '23505' || message.toLowerCase().includes('duplicate key') || message.toLowerCase().includes('unique')) {
+    return `Tracking ID collision occurred. Please submit again.`;
+  }
+
+  if (code === '23502' || message.toLowerCase().includes('not-null constraint')) {
+    return `Required column is missing or null: ${message}. ${details}`;
+  }
+
+  return `${message} ${details ? `(${details})` : ''} ${hint ? `Hint: ${hint}` : ''}`.trim();
 }

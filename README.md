@@ -10,50 +10,65 @@ A high-performance, responsive web application for **Qadri Science Academy** bui
   - *Middle Wing (Classes 6–8)*: Pre-matriculation scientific reasoning.
   - *Secondary / Matric (Classes 9–10: Bio-Science)*: Medical track preparation.
   - *Secondary / Matric (Classes 9–10: Computer Science)*: Tech & engineering track.
-  - Curriculum, laboratory schedule, and 4-tier testing system.
 - **Board Toppers Hall of Fame**: Top scorers with percentages, roll numbers, board names, and quotes.
 - **Activities & Events**: TechnoVation Science Expo, Sports Gala, Naat & Qirat competitions, and study excursions.
 - **Notices & Circulars**: Official announcement board with filters, search, and downloadable circular memos.
 - **Photo Gallery**: Categorized laboratory & campus moments with a full-screen Lightbox viewer.
-- **Admission Enquiry Form**:
-  - Live data collection (Student details, Grade applying for, Guardian info, previous percentage).
+- **Single 5-Field Admission Form**:
+  - Exactly 5 fields: Student Name, Father/Guardian Name, Class Applying For (1–10 & Matric), Phone/WhatsApp, and Address/City.
+  - Always shows clear status: **"Saved in Supabase Successfully"** or **"Not Saved Yet"**.
   - Generates official application reference tracking ID (e.g. `QSA-2026-XXXX`).
   - Printable/downloadable official admission acknowledgment receipt.
 - **Application Tracker**: Quick modal to look up status using the reference number.
-- **Contact & Location**: Interactive message desk and visual campus map.
+- **Contact & Location**: Campus address, phone/WhatsApp helplines, visiting hours, and Google Maps directions.
 
 ---
 
 ## Supabase Database Integration
 
-The application is structured with the official `@supabase/supabase-js` SDK.
+The application saves directly to your Supabase table `admission_inquiries`.
 
-### 1. Database Schema
-Copy and run the contents of [`supabase/schema.sql`](./supabase/schema.sql) in your **Supabase Project &rarr; SQL Editor**.
+### SQL Prompt to Paste in Supabase SQL Editor
 
-This automatically sets up:
-- `admission_enquiries`: Stores student applications with Row Level Security (RLS).
-- `contact_messages`: Stores inquiries sent via the contact form.
-- `announcements`: Stores official notices and circulars.
+Copy and run this in your **Supabase Dashboard &rarr; SQL Editor**:
 
-### 2. Environment Variables
-Add the following keys to your `.env` file (or Vercel project settings):
+```sql
+CREATE TABLE IF NOT EXISTS public.admission_inquiries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tracking_id VARCHAR(50) UNIQUE NOT NULL,
+    student_name VARCHAR(150) NOT NULL,
+    guardian_name VARCHAR(150) NOT NULL,
+    grade_applying VARCHAR(100) NOT NULL,
+    phone VARCHAR(30) NOT NULL,
+    address TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX IF NOT EXISTS idx_admission_inquiries_tracking_id 
+ON public.admission_inquiries (tracking_id);
+
+ALTER TABLE public.admission_inquiries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow public insert to admission_inquiries" ON public.admission_inquiries;
+CREATE POLICY "Allow public insert to admission_inquiries" 
+ON public.admission_inquiries
+FOR INSERT 
+TO anon, authenticated
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow public select by tracking_id" ON public.admission_inquiries;
+CREATE POLICY "Allow public select by tracking_id" 
+ON public.admission_inquiries
+FOR SELECT 
+TO anon, authenticated
+USING (true);
+```
+
+### Environment Variables (.env / Vercel)
 
 ```env
 VITE_SUPABASE_URL="https://your-project-id.supabase.co"
 VITE_SUPABASE_ANON_KEY="your-anon-public-key"
 ```
 
-*Note: If environment variables are not yet provided, the application automatically uses a resilient local storage queue so that user forms are never lost, and smoothly switches to Supabase once configured.*
-
----
-
-## Vercel Deployment
-
-This project is fully prepared for 1-click Vercel deployment:
-1. Push this repository to GitHub or GitLab.
-2. In the Vercel dashboard, click **Add New Project** &rarr; **Import**.
-3. Under **Environment Variables**, add:
-   - `VITE_SUPABASE_URL`
-   - `VITE_SUPABASE_ANON_KEY`
-4. Deploy! The included `vercel.json` ensures client-side SPA routing works seamlessly.
+*Note: In Vercel, after setting or updating environment variables, click **Redeploy** on your latest deployment so Vite can bundle them into your website.*
